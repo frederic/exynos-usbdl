@@ -1,4 +1,4 @@
-# [exynos-usbdl](https://github.com/frederic/exynos-usbdl) : unsigned code loader for USB mode of Exynos Bootrom
+# [exynos-usbdl](https://github.com/frederic/exynos-usbdl) : unsigned code loader for Exynos bootrom
 
 ## Disclaimer
 You will be solely responsible for any damage caused to your hardware/software/warranty/data/cat/etc...
