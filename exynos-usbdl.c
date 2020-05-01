@@ -219,6 +219,7 @@ int main(int argc, char *argv[])
 
 	if (argc != 2) {
 		printf("Usage: %s <input_file>\n", argv[0]);
+		printf("\tinput_file: payload binary to load and execute\n");
 		exit(-1);
 	}
 
