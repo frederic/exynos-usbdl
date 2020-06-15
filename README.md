@@ -31,3 +31,6 @@ Once first boot method fails, USB download mode can be accessed by pressing and 
 
 ## Payloads
 Payloads are raw binary AArch64 executables. Some are provided in directory **payloads/**.
+
+## License
+Please see [LICENSE](/LICENSE).
