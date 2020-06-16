@@ -6,7 +6,7 @@ You will be solely responsible for any damage caused to your hardware/software/w
 ## Description
 Exynos bootrom supports booting from USB. This method of boot requires an USB host to send a signed bootloader to the bootrom via USB port.
 
-This tool exploits a [vulnerability](https://fredericb.info/) in the USB download mode to load and run unsigned code in Secure World.
+This tool exploits a [vulnerability](https://fredericb.info/2020/06/exynos-usbdl-unsigned-code-loader-for-exynos-bootrom.html) in the USB download mode to load and run unsigned code in Secure World.
 
 ## Supported targets
 * Exynos 8890
