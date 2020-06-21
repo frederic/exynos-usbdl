@@ -22,7 +22,9 @@ This means **USB download mode is only accessible if first boot method has faile
 First boot method sabotage can be achieved either through software or hardware modification.
 The approach used for this project was to dig a hole in UFS chip with dental scraper.
 
-Once first boot method fails, USB download mode can be accessed by pressing and holding power button.
+For Exynos 8890, @astarasikov shared a better approach to corrupt bootloader without opening the device : from Download mode, flash *cm.bin* (from a firmware image) onto *BOOTLOADER* partition using [Heimdall tool](https://gitlab.com/BenjaminDobell/Heimdall). Please keep in mind that it will brick your device until you find a way to restore the *BOOTLOADER* partition.
+
+Once the first boot method fails, USB download mode can be accessed by pressing and holding power button.
 
 ## Usage
 ```
