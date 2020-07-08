@@ -236,7 +236,7 @@ int main(int argc, char *argv[])
 		exit(-1);
 	}
 
-	fd = fopen(argv[1],"rb+");
+	fd = fopen(argv[1],"rb");
 	if (fd == NULL) {
 		perror("Can't open input file !\n");
 		exit(-1);
