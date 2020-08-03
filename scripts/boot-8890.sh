@@ -1,6 +1,9 @@
 #!/bin/sh
 
-./exynos-usbdl-normal $1.1.bin
-./exynos-usbdl-normal $1.2.bin
-./exynos-usbdl-normal $1.3.bin
-./exynos-usbdl-normal $1.4.bin
+./exynos-usbdl n $1.1.bin
+sleep 1
+./exynos-usbdl n $1.2.bin
+sleep 1
+./exynos-usbdl n $1.3.bin
+sleep 1
+./exynos-usbdl n $1.4.bin

